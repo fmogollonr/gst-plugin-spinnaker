@@ -94,7 +94,7 @@ enum
 #define DEFAULT_PROP_BGAIN              727
 #define DEFAULT_PROP_BINNING            1
 #define DEFAULT_PROP_SHARPNESS			2    // this is 'normal'
-#define DEFAULT_PROP_SATURATION			25   // this is 100 on the camera scale 0-400
+#define DEFAULT_PROP_SATURATION			50   // this is 100 on the camera scale 0-400
 #define DEFAULT_PROP_HORIZ_FLIP         0
 #define DEFAULT_PROP_VERT_FLIP          0
 #define DEFAULT_PROP_WHITEBALANCE       GST_WB_MANUAL
@@ -111,7 +111,6 @@ enum
 #define DEFAULT_PROP_HEIGHT			    512
 
 #define DEFAULT_GST_VIDEO_FORMAT GST_VIDEO_FORMAT_GRAY8
-#define DEFAULT_FLYCAP_VIDEO_FORMAT FC2_PIXEL_FORMAT_RGB8
 // Put matching type text in the pad template below
 
 // pad template
@@ -136,6 +135,33 @@ G_DEFINE_TYPE_WITH_CODE (GstSpinnakerSrc, gst_spinnaker_src, GST_TYPE_PUSH_SRC,
     GST_DEBUG_CATEGORY_INIT (GST_CAT_DEFAULT, "spinnaker", 0,
         "debug category for spinnaker element"));
 
+// This function handles the error prints when a node or entry is unavailable or
+// not readable/writable on the connected camera
+void PrintRetrieveNodeFailure(char node[], char name[])
+{
+    printf("Unable to get %s (%s %s retrieval failed).\n\n", node, name, node);
+}
+
+// This function helps to check if a node is available and readable
+bool8_t IsAvailableAndReadable(spinNodeHandle hNode, char nodeName[])
+{
+    bool8_t pbAvailable = False;
+    spinError err = SPINNAKER_ERR_SUCCESS;
+    err = spinNodeIsAvailable(hNode, &pbAvailable);
+    if (err != SPINNAKER_ERR_SUCCESS)
+    {
+        printf("Unable to retrieve node availability (%s node), with error %d...\n\n", nodeName, err);
+    }
+
+    bool8_t pbReadable = False;
+    err = spinNodeIsReadable(hNode, &pbReadable);
+    if (err != SPINNAKER_ERR_SUCCESS)
+    {
+        printf("Unable to retrieve node readability (%s node), with error %d...\n\n", nodeName, err);
+    }
+    return pbReadable && pbAvailable;
+}
+
 // This function helps to check if a node is available and writable
 bool8_t IsAvailableAndWritable(spinNodeHandle hNode, char nodeName[])
 {
@@ -155,6 +181,301 @@ bool8_t IsAvailableAndWritable(spinNodeHandle hNode, char nodeName[])
     }
     return pbWritable && pbAvailable;
 }
+
+// This function configures a number of settings on the camera including
+// offsets X and Y, width, height, and pixel format. These settings will be
+// applied before spinCameraBeginAcquisition() is called; otherwise, they will
+// be read only. Also, it is important to note that settings are applied
+// immediately. This means if you plan to reduce the width and move the x
+// offset accordingly, you need to apply such changes in the appropriate order.
+spinError ConfigureCustomImageSettings(spinNodeMapHandle hNodeMap)
+{
+    spinError err = SPINNAKER_ERR_SUCCESS;
+
+    printf("\n\n*** CONFIGURING CUSTOM IMAGE SETTINGS ***\n\n");
+
+    //
+    // Apply mono 8 pixel format
+    //
+    // *** NOTES ***
+    // Enumeration nodes are slightly more complicated to set than other
+    // nodes. This is because setting an enumeration node requires working
+    // with two nodes instead of the usual one.
+    //
+    // As such, there are a number of steps to setting an enumeration node:
+    // retrieve the enumeration node from the nodemap, retrieve the desired
+    // entry node from the enumeration node, retrieve the integer value
+    // from the entry node, and set the new value of the enumeration node
+    // with the integer value from the entry node.
+    //
+    // It is important to note that there are two sets of functions that might
+    // produce erroneous results if they were to be mixed up. The first two
+    // functions, spinEnumerationSetIntValue() and
+    // spinEnumerationEntryGetIntValue(), use the integer values stored on each
+    // individual cameras. The second two, spinEnumerationSetEnumValue() and
+    // spinEnumerationEntryGetEnumValue(), use enum values defined in the
+    // Spinnaker library. The int and enum values will most likely be
+    // different from another.
+    //
+    spinNodeHandle hPixelFormat = NULL;
+    spinNodeHandle hPixelFormatMono8 = NULL;
+    int64_t pixelFormatMono8 = 0;
+
+    // Retrieve enumeration node from the nodemap
+    err = spinNodeMapGetNode(hNodeMap, "PixelFormat", &hPixelFormat);
+    if (err != SPINNAKER_ERR_SUCCESS)
+    {
+        printf("Unable to set pixel format (node retrieval). Aborting with error %d...\n\n", err);
+        return err;
+    }
+
+    // Retrieve desired entry node from the enumeration node
+    if (IsAvailableAndReadable(hPixelFormat, "PixelFormat"))
+    {
+        err = spinEnumerationGetEntryByName(hPixelFormat, "Mono10Packed", &hPixelFormatMono8);
+        if (err != SPINNAKER_ERR_SUCCESS)
+        {
+            printf("Unable to set pixel format (enum entry retrieval). Aborting with error %d...\n\n", err);
+            return err;
+        }
+    }
+    else
+    {
+        PrintRetrieveNodeFailure("node", "PixelFormat");
+        return SPINNAKER_ERR_ACCESS_DENIED;
+    }
+
+    // Retrieve integer value from entry node
+    if (IsAvailableAndReadable(hPixelFormatMono8, "PixelFormatMono10Packed"))
+    {
+        err = spinEnumerationEntryGetIntValue(hPixelFormatMono8, &pixelFormatMono8);
+        if (err != SPINNAKER_ERR_SUCCESS)
+        {
+            printf("Unable to set pixel format (enum entry int value retrieval). Aborting with error %d...\n\n", err);
+            return err;
+        }
+    }
+    else
+    {
+        PrintRetrieveNodeFailure("entry", "PixelFormat 'Mono10Packed'");
+        return SPINNAKER_ERR_ACCESS_DENIED;
+    }
+
+    // Set integer as new value for enumeration node
+    if (IsAvailableAndWritable(hPixelFormat, "PixelFormat"))
+    {
+        err = spinEnumerationSetIntValue(hPixelFormat, pixelFormatMono8);
+        if (err != SPINNAKER_ERR_SUCCESS)
+        {
+            printf("Unable to set pixel format (enum entry setting). Aborting with error %d...\n\n", err);
+            return err;
+        }
+    }
+    else
+    {
+        PrintRetrieveNodeFailure("node", "PixelFormat");
+        return SPINNAKER_ERR_ACCESS_DENIED;
+    }
+
+    printf("Pixel format set to 'mono10'...\n");
+
+    //
+    // Apply minimum to offset X
+    //
+    // *** NOTES ***
+    // Numeric nodes have both a minimum and maximum. A minimum is retrieved
+    // with the method GetMin(). Sometimes it can be important to check
+    // minimums to ensure that your desired value is within range.
+    //
+    // Notice that the node type is explicitly expressed in the name of the
+    // second and third functions. Although node types are not expressed in
+    // node handles, knowing the node type is important to interacting with
+    // a node in any meaningful way.
+    //
+    spinNodeHandle hOffsetX = NULL;
+    int64_t offsetXMin = 0;
+
+    err = spinNodeMapGetNode(hNodeMap, "OffsetX", &hOffsetX);
+    if (err != SPINNAKER_ERR_SUCCESS)
+    {
+        printf("Unable to set offset x. Aborting with error %d...\n\n", err);
+        return err;
+    }
+
+    // get min
+    if (IsAvailableAndWritable(hOffsetX, "OffsetX"))
+    {
+        err = spinIntegerGetMin(hOffsetX, &offsetXMin);
+        if (err != SPINNAKER_ERR_SUCCESS)
+        {
+            printf("Unable to set offset x. Aborting with error %d...\n\n", err);
+            return err;
+        }
+    }
+    else
+    {
+        PrintRetrieveNodeFailure("node", "OffsetX");
+        return SPINNAKER_ERR_ACCESS_DENIED;
+    }
+
+    // set min
+    err = spinIntegerSetValue(hOffsetX, offsetXMin);
+    if (err != SPINNAKER_ERR_SUCCESS)
+    {
+        printf("Unable to set offset x. Aborting with error %d...\n\n", err);
+        return err;
+    }
+    printf("Offset X set to %d...\n", (int)offsetXMin);
+
+    //
+    // Apply minimum to offset Y
+    //
+    // *** NOTES ***
+    // It is often desirable to check the increment as well. The increment
+    // is a number of which a desired value must be a multiple. Certain
+    // nodes, such as those corresponding to offsets X and Y, have an
+    // increment of 1, which basically means that any value within range
+    // is appropriate. The increment is retrieved with the method
+    // spinIntegerGetInc().
+    //
+    // The offsets both hold integer values. As such, if a double were input
+    // as an argument or if a string function were used, problems would
+    // occur.
+    //
+    spinNodeHandle hOffsetY = NULL;
+    int64_t offsetYMin = 0;
+
+    err = spinNodeMapGetNode(hNodeMap, "OffsetY", &hOffsetY);
+    if (err != SPINNAKER_ERR_SUCCESS)
+    {
+        printf("Unable to set offset Y. Aborting with error %d...\n\n", err);
+        return err;
+    }
+
+    // get min
+    if (IsAvailableAndWritable(hOffsetY, "OffsetY"))
+    {
+        err = spinIntegerGetMin(hOffsetY, &offsetYMin);
+        if (err != SPINNAKER_ERR_SUCCESS)
+        {
+            printf("Unable to set offset Y. Aborting with error %d...\n\n", err);
+            return err;
+        }
+    }
+    else
+    {
+        PrintRetrieveNodeFailure("node", "OffsetY");
+        return SPINNAKER_ERR_ACCESS_DENIED;
+    }
+
+    // set min
+    err = spinIntegerSetValue(hOffsetY, offsetYMin);
+    if (err != SPINNAKER_ERR_SUCCESS)
+    {
+        printf("Unable to set offset Y. Aborting with error %d...\n\n", err);
+        return err;
+    }
+    printf("Offset Y set to %d...\n", (int)offsetYMin);
+
+    //
+    // Set maximum width
+    //
+    // *** NOTES ***
+    // Other nodes, such as those corresponding to image width and height,
+    // might have an increment other than 1. In these cases, it can be
+    // important to check that the desired value is a multiple of the
+    // increment.
+    //
+    // This is often the case for width and height nodes. However, because
+    // these nodes are being set to their maximums, there is no real reason
+    // to check against the increment.
+    //
+    spinNodeHandle hWidth = NULL;
+    int64_t widthToSet = 0;
+
+    // Retrieve width node
+    err = spinNodeMapGetNode(hNodeMap, "Width", &hWidth);
+    if (err != SPINNAKER_ERR_SUCCESS)
+    {
+        printf("Unable to set width. Aborting with error %d...\n\n", err);
+        return err;
+    }
+
+    // Retrieve maximum width
+    if (IsAvailableAndWritable(hWidth, "Width"))
+    {
+        err = spinIntegerGetMax(hWidth, &widthToSet);
+        if (err != SPINNAKER_ERR_SUCCESS)
+        {
+            printf("Unable to get width. Aborting with error %d...\n\n", err);
+            return err;
+        }
+    }
+    else
+    {
+        PrintRetrieveNodeFailure("node", "Width");
+        return SPINNAKER_ERR_ACCESS_DENIED;
+    }
+
+    // Set width
+    err = spinIntegerSetValue(hWidth, widthToSet);
+    if (err != SPINNAKER_ERR_SUCCESS)
+    {
+        printf("Unable to set width. Aborting with error %d...\n\n", err);
+        return err;
+    }
+
+    printf("Width set to %d...\n", (int)widthToSet);
+
+    //
+    // Set maximum height
+    //
+    // *** NOTES ***
+    // A maximum is retrieved with the method spinIntegerGetMax(). A node's
+    // minimum and maximum should always be multiples of the increment.
+    //
+    spinNodeHandle hHeight = NULL;
+    int64_t HeightToSet = 0;
+
+    // Retrieve Height node
+    err = spinNodeMapGetNode(hNodeMap, "Height", &hHeight);
+    if (err != SPINNAKER_ERR_SUCCESS)
+    {
+        printf("Unable to set Height. Aborting with error %d...\n\n", err);
+        return err;
+    }
+
+    // Retrieve maximum Height
+    if (IsAvailableAndWritable(hHeight, "Height"))
+    {
+        err = spinIntegerGetMax(hHeight, &HeightToSet);
+        if (err != SPINNAKER_ERR_SUCCESS)
+        {
+            printf("Unable to get Height. Aborting with error %d...\n\n", err);
+            return err;
+        }
+    }
+    else
+    {
+        PrintRetrieveNodeFailure("node", "Height");
+        return SPINNAKER_ERR_ACCESS_DENIED;
+    }
+
+    // Set Height
+    err = spinIntegerSetValue(hHeight, HeightToSet);
+    if (err != SPINNAKER_ERR_SUCCESS)
+    {
+        printf("Unable to set Height. Aborting with error %d...\n\n", err);
+        return err;
+    }
+
+    printf("Height set to %d...\n", (int)HeightToSet);
+
+    return err;
+}
+
+
+
 
 /* class initialisation */
 static void
@@ -213,6 +534,7 @@ init_properties(GstSpinnakerSrc * src)
   src->nPitch = src->nWidth * src->nBytesPerPixel;
   src->gst_stride = src->nPitch;
   src->cameraID = DEFAULT_PROP_CAMERA;
+  src->exposure = DEFAULT_PROP_EXPOSURE;
 
 }
 
@@ -375,13 +697,13 @@ gst_spinnaker_src_start (GstBaseSrc * bsrc)
 	if (numCameras==0){
 		GST_ERROR_OBJECT(src, "No Flycapture device found.");
 		
-    // Clear and destroy camera list before releasing system
-    EXEANDCHECK(spinCameraListClear(src->hCameraList));
+   	 // Clear and destroy camera list before releasing system
+    	EXEANDCHECK(spinCameraListClear(src->hCameraList));
 
-    EXEANDCHECK(spinCameraListDestroy(src->hCameraList));
+    	EXEANDCHECK(spinCameraListDestroy(src->hCameraList));
 
-    // Release system
-    EXEANDCHECK(spinSystemReleaseInstance(src->hSystem));
+    	// Release system
+    	EXEANDCHECK(spinSystemReleaseInstance(src->hSystem));
 
 		GST_ERROR_OBJECT(src, "No device found.");
 		goto fail;
@@ -393,6 +715,21 @@ gst_spinnaker_src_start (GstBaseSrc * bsrc)
     EXEANDCHECK(spinCameraListGet(src->hCameraList, src->cameraID, &hCamera));
 	GST_DEBUG_OBJECT (src, "initializing camera");
     EXEANDCHECK(spinCameraInit(hCamera));
+    
+	// Retrieve GenICam nodemap
+    spinNodeMapHandle hNodeMap = NULL;
+
+    err = spinCameraGetNodeMap(hCamera, &hNodeMap);
+    if (err != SPINNAKER_ERR_SUCCESS)
+    {
+        printf("Unable to retrieve GenICam nodemap. Aborting with error %d...\n\n", err);
+        return err;
+    }
+	    err = ConfigureCustomImageSettings(hNodeMap);
+    if (err != SPINNAKER_ERR_SUCCESS)
+    {
+        return err;
+    }
 
 	//starts camera acquisition. Doesn't actually fill the gstreamer buffer. see create function
 	GST_DEBUG_OBJECT (src, "starting acquisition");
@@ -492,6 +829,7 @@ gst_spinnaker_src_set_caps (GstBaseSrc * bsrc, GstCaps * caps)
 static GstFlowReturn
 gst_spinnaker_src_create (GstPushSrc * psrc, GstBuffer ** buf)
 {
+	spinError err = SPINNAKER_ERR_SUCCESS;
 	GstSpinnakerSrc *src = GST_SPINNAKER_SRC (psrc);
 	GstMapInfo minfo;
 
@@ -510,24 +848,54 @@ gst_spinnaker_src_create (GstPushSrc * psrc, GstBuffer ** buf)
 	EXEANDCHECK(spinImageIsIncomplete(hResultImage, &isIncomplete));
 
 	// Create a new buffer for the image
-	*buf = gst_buffer_new_and_alloc (src->nHeight * src->nWidth * src->nBytesPerPixel);
+	//printf("Bytes per pixel are %d\n"),src->nBytesPerPixel;
+	//*buf = gst_buffer_new_and_alloc (src->nHeight * src->nWidth * src->nBytesPerPixel);
+	*buf = gst_buffer_new_and_alloc (src->nHeight * src->nWidth * 16);
+	//printf("Bytes per pixel are %d\n"),src->nBytesPerPixel;
 
 	gst_buffer_map (*buf, &minfo, GST_MAP_WRITE);
 
+
+	spinImage hConvertedImage = NULL;
+
+    err = spinImageCreateEmpty(&hConvertedImage);
+    if (err != SPINNAKER_ERR_SUCCESS)
+    {
+        printf("Unable to create image. Non-fatal error %d...\n\n", err);
+        hasFailed = True;
+    }
+
+    err = spinImageConvert(hResultImage, PixelFormat_Mono8, hConvertedImage);
+    if (err != SPINNAKER_ERR_SUCCESS)
+    {
+        printf("Unable to convert image. Non-fatal error %d...\n\n", err);
+        hasFailed = True;
+    }
+
+
 	size_t imageSize;
+	EXEANDCHECK(spinImageGetBufferSize(hConvertedImage, &imageSize));
+	//printf("Converted Image size is %d\n",imageSize);
+
 	EXEANDCHECK(spinImageGetBufferSize(hResultImage, &imageSize));
+	//printf("Source Image size is %d\n",imageSize);
+
+	//printf("nPitch size is %d\n",src->nPitch);
+	//printf("gst_stride size is %d\n",src->gst_stride);
 
 	//grab pointer to image data	
 	void *data;
-	EXEANDCHECK(spinImageGetData(hResultImage, &data)); 
+	EXEANDCHECK(spinImageGetData(hConvertedImage, &data)); 
 
 	//copy image data into gstreamer buffer
 	for (int i = 0; i < src->nHeight; i++) {
+		//printf("Copy line %d \n",i);
 		memcpy (minfo.data + i * src->gst_stride, data + i * src->nPitch, src->nPitch);
 	}
 
 	//release image and buffer
 	EXEANDCHECK(spinImageRelease(hResultImage));
+	//EXEANDCHECK(spinImageRelease(hConvertedImage));
 	gst_buffer_unmap (*buf, &minfo);
 
     src->duration = 1000000000.0/src->framerate; 

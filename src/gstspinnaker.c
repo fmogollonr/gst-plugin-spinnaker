@@ -232,7 +232,7 @@ spinError ConfigureCustomImageSettings(spinNodeMapHandle hNodeMap)
     // Retrieve desired entry node from the enumeration node
     if (IsAvailableAndReadable(hPixelFormat, "PixelFormat"))
     {
-        err = spinEnumerationGetEntryByName(hPixelFormat, "Mono10Packed", &hPixelFormatMono8);
+        err = spinEnumerationGetEntryByName(hPixelFormat, "Mono14", &hPixelFormatMono8);
         if (err != SPINNAKER_ERR_SUCCESS)
         {
             printf("Unable to set pixel format (enum entry retrieval). Aborting with error %d...\n\n", err);
@@ -246,7 +246,7 @@ spinError ConfigureCustomImageSettings(spinNodeMapHandle hNodeMap)
     }
 
     // Retrieve integer value from entry node
-    if (IsAvailableAndReadable(hPixelFormatMono8, "PixelFormatMono10Packed"))
+    if (IsAvailableAndReadable(hPixelFormatMono8, "PixelFormatMono14"))
     {
         err = spinEnumerationEntryGetIntValue(hPixelFormatMono8, &pixelFormatMono8);
         if (err != SPINNAKER_ERR_SUCCESS)
@@ -257,7 +257,7 @@ spinError ConfigureCustomImageSettings(spinNodeMapHandle hNodeMap)
     }
     else
     {
-        PrintRetrieveNodeFailure("entry", "PixelFormat 'Mono10Packed'");
+        PrintRetrieveNodeFailure("entry", "PixelFormat 'Mono14'");
         return SPINNAKER_ERR_ACCESS_DENIED;
     }
 

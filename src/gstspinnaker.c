@@ -896,6 +896,8 @@ gst_spinnaker_src_create (GstPushSrc * psrc, GstBuffer ** buf)
 	//release image and buffer
 	EXEANDCHECK(spinImageRelease(hResultImage));
 	//EXEANDCHECK(spinImageRelease(hConvertedImage));
+	spinImageDestroy(hConvertedImage);
+
 	gst_buffer_unmap (*buf, &minfo);
 
     src->duration = 1000000000.0/src->framerate; 
